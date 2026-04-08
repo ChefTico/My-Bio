@@ -1,0 +1,1111 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html-to-image/1.11.13/html-to-image.min.js" integrity="sha512-iZ2ORl595Wx6miw+GuadDet4WQbdSWS3JLMoNfY8cRGoEFy6oT3G9IbcrBeL6AfkgpA51ETt/faX6yLV+/gFJg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script>
+      (function() {
+        const originalConsole = window.console;
+        window.console = {
+          log: (...args) => {
+            originalConsole.log(...args);
+            window.parent.postMessage({ type: 'console', message: args.join(' ') }, '*');
+          },
+          error: (...args) => {
+            originalConsole.error(...args);
+            window.parent.postMessage({ type: 'console', message: 'Error: ' + args.join(' ') }, '*');
+          },
+          warn: (...args) => {
+            originalConsole.warn(...args);
+            window.parent.postMessage({ type: 'console', message: 'Warning: ' + args.join(' ') }, '*');
+          }
+        };
+
+        let requestId = 0;
+        let callbacksMap = new Map();
+        let streamControllers = new Map();
+        
+        window.claude = {
+          complete: (prompt) => {
+            return new Promise((resolve, reject) => {
+              const id = requestId++;
+              callbacksMap.set(id, { resolve, reject });
+              window.parent.postMessage({ type: 'claudeComplete', id, prompt }, '*');
+            });
+          }
+        };
+
+        window.storage = {
+          get: (key, shared = false) => {
+            return new Promise((resolve, reject) => {
+              const id = requestId++;
+              callbacksMap.set(id, { resolve, reject });
+              window.parent.postMessage({ type: 'storageGet', id, key, shared }, '*');
+            });
+          },
+          set: (key, value, shared = false) => {
+            return new Promise((resolve, reject) => {
+              const id = requestId++;
+              callbacksMap.set(id, { resolve, reject });
+              window.parent.postMessage({ type: 'storageSet', id, key, value, shared }, '*');
+            });
+          },
+          delete: (key, shared = false) => {
+            return new Promise((resolve, reject) => {
+              const id = requestId++;
+              callbacksMap.set(id, { resolve, reject });
+              window.parent.postMessage({ type: 'storageDelete', id, key, shared }, '*');
+            });
+          },
+          list: (prefix, shared = false) => {
+            return new Promise((resolve, reject) => {
+              const id = requestId++;
+              callbacksMap.set(id, { resolve, reject });
+              window.parent.postMessage({ type: 'storageList', id, prefix, shared }, '*');
+            });
+          }
+        };
+
+        let pendingBlobs = new Map();
+        URL.createObjectURL = (blob) => {
+          // Store the blob and create an ID and URL for it
+          const blobId = `blob-${Date.now()}-${Math.random()}`;
+          pendingBlobs.set(blobId, blob);
+          return `blob-request://${blobId}`;
+        };
+
+        URL.revokeObjectURL = (url) => {
+          // Remove the blob from our store
+          const blobId = url.replace("blob-request://", "");
+          pendingBlobs.delete(blobId);
+        };
+
+        const getBlobFromURL = (url) => {
+          const blobId = url.replace("blob-request://", "");
+          return pendingBlobs.get(blobId);
+        };
+
+        // Override global fetch with streaming support
+        window.fetch = (url, init = {}) => {
+          return new Promise((resolve, reject) => {
+            const id = requestId++;
+            const channelId = `fetch-${id}-${Date.now()}`;
+            
+            callbacksMap.set(id, { 
+              resolve: (response) => {
+                // Create a ReadableStream for the response body
+                const stream = new ReadableStream({
+                  start(controller) {
+                    streamControllers.set(channelId, controller);
+                  },
+                  cancel() {
+                    streamControllers.delete(channelId);
+                  }
+                });
+                
+                // Create and return the Response with the stream
+                resolve(new Response(stream, {
+                  status: response.status,
+                  statusText: response.statusText,
+                  headers: response.headers
+                }));
+              },
+              reject,
+              channelId
+            });
+            
+            window.parent.postMessage({
+              type: 'proxyFetch',
+              id,
+              url,
+              init,
+              channelId
+            }, '*');
+          });
+        };
+
+        window.addEventListener('message', async (event) => {
+          if (event.data.type === 'takeScreenshot') {
+            const rootElement = document.getElementById('artifacts-component-root-html');
+            if (!rootElement) {
+              window.parent.postMessage({
+                type: 'screenshotError',
+                error: new Error('Root element not found'),
+              }, '*');
+            }
+            const screenshot = await htmlToImage.toPng(rootElement, {
+              imagePlaceholder:
+                "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAAXNSR0IArs4c6QAAAA1JREFUGFdjePDgwX8ACOQDoNsk0PMAAAAASUVORK5CYII=",
+            });
+            window.parent.postMessage({
+              type: 'screenshotData',
+              data: screenshot,
+            }, '*');
+          } else if (event.data.type === 'claudeComplete') {
+            const callback = callbacksMap.get(event.data.id);
+            if (event.data.error) {
+              callback.reject(new Error(event.data.error));
+            } else {
+              callback.resolve(event.data.completion);
+            }
+            callbacksMap.delete(event.data.id);
+          } else if (event.data.type === 'proxyFetchResponse') {
+            const callback = callbacksMap.get(event.data.id);
+            if (event.data.error) {
+              callback.reject(new Error(event.data.error));
+              callbacksMap.delete(event.data.id);
+            } else {
+              // Initial response with headers, status, etc.
+              callback.resolve({
+                status: event.data.status,
+                statusText: event.data.statusText,
+                headers: event.data.headers
+              });
+              // Don't delete the callback yet if streaming
+              if (!event.data.body) {
+                callbacksMap.delete(event.data.id);
+              }
+            }
+          } else if (event.data.type === 'proxyFetchStream') {
+            // Handle streaming data chunks
+            const controller = streamControllers.get(event.data.channelId);
+            if (controller) {
+              if (event.data.error) {
+                controller.error(new Error(event.data.error));
+                streamControllers.delete(event.data.channelId);
+              } else if (event.data.done) {
+                controller.close();
+                streamControllers.delete(event.data.channelId);
+                // Clean up the callback
+                const callback = Array.from(callbacksMap.entries()).find(
+                  ([_, value]) => value.channelId === event.data.channelId
+                );
+                if (callback) {
+                  callbacksMap.delete(callback[0]);
+                }
+              } else if (event.data.chunk) {
+                controller.enqueue(new Uint8Array(event.data.chunk));
+              }
+            }
+          } else if (event.data.type === 'storageGet') {
+            const callback = callbacksMap.get(event.data.id);
+            if (event.data.error) {
+              callback.reject(new Error(event.data.error));
+            } else {
+              callback.resolve(event.data.result);
+            }
+            callbacksMap.delete(event.data.id);
+          } else if (event.data.type === 'storageSet') {
+            const callback = callbacksMap.get(event.data.id);
+            if (event.data.error) {
+              callback.reject(new Error(event.data.error));
+            } else {
+              callback.resolve(event.data.result);
+            }
+            callbacksMap.delete(event.data.id);
+          } else if (event.data.type === 'storageDelete') {
+            const callback = callbacksMap.get(event.data.id);
+            if (event.data.error) {
+              callback.reject(new Error(event.data.error));
+            } else {
+              callback.resolve(event.data.result);
+            }
+            callbacksMap.delete(event.data.id);
+          } else if (event.data.type === 'storageList') {
+            const callback = callbacksMap.get(event.data.id);
+            if (event.data.error) {
+              callback.reject(new Error(event.data.error));
+            } else {
+              callback.resolve(event.data.result);
+            }
+            callbacksMap.delete(event.data.id);
+          }
+        });
+
+        window.addEventListener('click', (event) => {
+          const isEl = event.target instanceof HTMLElement;
+          if (!isEl) return;
+    
+          // find ancestor links
+          const linkEl = event.target.closest("a");
+          if (!linkEl || !linkEl.href) return;
+    
+          event.preventDefault();
+          event.stopImmediatePropagation();
+    
+          if (linkEl.href.startsWith("blob-request:")) {
+            const blob = getBlobFromURL(linkEl.href);
+            if (!blob) return;
+            void blob.arrayBuffer().then((data) => {
+              window.parent.postMessage({
+                type: "downloadFile",
+                filename: linkEl.download,
+                data,
+                mimeType: blob.type || "application/octet-stream",
+              });
+            });
+          } else if (linkEl.href.startsWith("data:")) {
+            const [header, base64Data] = linkEl.href.split(",");
+            const mimeMatch = header.match(/data:([^;]+)/);
+            const mimeType = mimeMatch ? mimeMatch[1] : "application/octet-stream";
+            const binaryString = atob(base64Data);
+            const data = Uint8Array.from(binaryString, (c) =>
+              c.charCodeAt(0),
+            ).buffer;
+            window.parent.postMessage({
+              type: "downloadFile",
+              filename: linkEl.download,
+              data,
+              mimeType,
+            });
+          } else {
+            let linkUrl;
+            try {
+              linkUrl = new URL(linkEl.href);
+            } catch (error) {
+              return;
+            }
+    
+            if (linkUrl.hostname === window.location.hostname) return;
+      
+            window.parent.postMessage({
+              type: 'openExternal',
+              href: linkEl.href,
+            }, '*');
+          }
+      });
+
+        const originalOpen = window.open;
+        window.open = function (url) {
+          window.parent.postMessage({
+            type: "openExternal",
+            href: url,
+          }, "*");
+        };
+
+        window.addEventListener('error', (event) => {
+          window.parent.postMessage({ type: 'console', message: 'Uncaught Error: ' + event.message }, '*');
+        });
+      })();
+    </script>
+  
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Michele Gobbato — Executive Chef Sommelier</title>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;1,300;1,400&amp;family=Montserrat:wght@200;300;400;500&amp;display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --gold: #b89c6e;
+      --gold-light: #d4b98a;
+      --cream: #f5f0e8;
+      --dark: #0d0c0b;
+      --dark-mid: #1a1815;
+      --dark-card: #141210;
+      --text-muted: #7a7060;
+      --border: rgba(184, 156, 110, 0.2);
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      background: var(--dark);
+      color: var(--cream);
+      font-family: 'Montserrat', sans-serif;
+      font-weight: 300;
+      line-height: 1.7;
+      overflow-x: hidden;
+    }
+
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+      pointer-events: none;
+      z-index: 0;
+      opacity: 0.5;
+    }
+
+    /* ── EDIT TOOLBAR ── */
+    #edit-toolbar {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      z-index: 1000;
+      background: #1a1815;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.75rem 2rem;
+      font-family: 'Montserrat', sans-serif;
+      transform: translateY(-100%);
+      transition: transform 0.3s ease;
+    }
+
+    #edit-toolbar.visible { transform: translateY(0); }
+    .toolbar-left { display: flex; align-items: center; gap: 1.2rem; }
+
+    .toolbar-badge {
+      font-size: 0.55rem;
+      letter-spacing: 0.25em;
+      text-transform: uppercase;
+      color: var(--gold);
+      background: rgba(184,156,110,0.1);
+      border: 1px solid rgba(184,156,110,0.3);
+      padding: 0.3rem 0.8rem;
+    }
+
+    .toolbar-hint { font-size: 0.6rem; letter-spacing: 0.1em; color: var(--text-muted); }
+    .toolbar-actions { display: flex; gap: 0.8rem; }
+
+    .btn {
+      font-family: 'Montserrat', sans-serif;
+      font-size: 0.6rem;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      padding: 0.5rem 1.2rem;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--cream);
+      cursor: pointer;
+      transition: all 0.2s;
+      font-weight: 400;
+    }
+
+    .btn:hover { border-color: var(--gold); color: var(--gold); }
+    .btn-save { background: var(--gold); border-color: var(--gold); color: var(--dark); }
+    .btn-save:hover { background: var(--gold-light); border-color: var(--gold-light); color: var(--dark); }
+
+    /* ── FLOATING TOGGLE ── */
+    #edit-toggle {
+      position: fixed;
+      bottom: 2rem; right: 2rem;
+      z-index: 999;
+      font-family: 'Montserrat', sans-serif;
+      font-size: 0.6rem;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      padding: 0.8rem 1.5rem;
+      background: var(--dark-mid);
+      border: 1px solid var(--border);
+      color: var(--gold);
+      cursor: pointer;
+      transition: all 0.3s;
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      font-weight: 400;
+      box-shadow: 0 4px 30px rgba(0,0,0,0.5);
+    }
+
+    #edit-toggle:hover { border-color: var(--gold); background: rgba(184,156,110,0.08); }
+    #edit-toggle.active { background: var(--gold); color: var(--dark); border-color: var(--gold); }
+
+    /* ── EDITABLE STYLES ── */
+    body.edit-mode [contenteditable="true"] {
+      outline: none;
+      border-bottom: 1px dashed rgba(184,156,110,0.4);
+      cursor: text;
+      transition: background 0.2s;
+      padding: 2px 4px;
+      margin: -2px -4px;
+      border-radius: 2px;
+    }
+
+    body.edit-mode [contenteditable="true"]:hover {
+      background: rgba(184,156,110,0.07);
+      border-color: var(--gold);
+    }
+
+    body.edit-mode [contenteditable="true"]:focus {
+      background: rgba(184,156,110,0.12);
+      border-bottom: 1px solid var(--gold);
+    }
+
+    /* ── DELETE BUTTONS ── */
+    .delete-btn {
+      display: none;
+      position: absolute;
+      top: 0.5rem; right: 0.5rem;
+      background: rgba(180,60,60,0.15);
+      border: 1px solid rgba(180,60,60,0.3);
+      color: #c47070;
+      font-size: 0.5rem;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      padding: 0.25rem 0.55rem;
+      cursor: pointer;
+      font-family: 'Montserrat', sans-serif;
+      z-index: 10;
+      transition: all 0.2s;
+    }
+
+    .delete-btn:hover { background: rgba(180,60,60,0.3); border-color: #c47070; }
+    body.edit-mode .delete-btn { display: block; }
+
+    /* ── ADD BUTTONS ── */
+    .add-item-btn {
+      display: none;
+      width: 100%;
+      padding: 1.2rem;
+      border: 1px dashed rgba(184,156,110,0.2);
+      background: transparent;
+      color: rgba(184,156,110,0.4);
+      font-family: 'Montserrat', sans-serif;
+      font-size: 0.6rem;
+      letter-spacing: 0.25em;
+      text-transform: uppercase;
+      cursor: pointer;
+      margin-top: 1rem;
+      transition: all 0.2s;
+    }
+
+    .add-item-btn:hover { border-color: var(--gold); color: var(--gold); }
+    body.edit-mode .add-item-btn { display: block; }
+
+    .add-tag-btn {
+      display: none;
+      padding: 0.5rem 1.2rem;
+      border: 1px dashed rgba(184,156,110,0.3);
+      font-size: 0.65rem;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: rgba(184,156,110,0.4);
+      background: transparent;
+      cursor: pointer;
+      font-family: 'Montserrat', sans-serif;
+      font-weight: 300;
+      transition: all 0.2s;
+    }
+
+    .add-tag-btn:hover { border-color: var(--gold); color: var(--gold); }
+    body.edit-mode .add-tag-btn { display: inline-flex; align-items: center; gap: 0.4rem; }
+
+    /* ── HEADER ── */
+    header {
+      position: relative;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 6rem 8vw 4rem;
+      border-bottom: 1px solid var(--border);
+      overflow: hidden;
+    }
+
+    header::after {
+      content: '';
+      position: absolute;
+      top: -20%; right: -10%;
+      width: 600px; height: 600px;
+      background: radial-gradient(circle, rgba(184,156,110,0.07) 0%, transparent 70%);
+      pointer-events: none;
+    }
+
+    .eyebrow {
+      font-weight: 200;
+      font-size: 0.65rem;
+      letter-spacing: 0.35em;
+      text-transform: uppercase;
+      color: var(--gold);
+      margin-bottom: 2.5rem;
+      opacity: 0;
+      animation: fadeUp 1s ease forwards 0.2s;
+    }
+
+    h1 {
+      font-family: 'Cormorant Garamond', serif;
+      font-weight: 300;
+      font-size: clamp(3.5rem, 9vw, 8rem);
+      line-height: 0.95;
+      color: var(--cream);
+      opacity: 0;
+      animation: fadeUp 1s ease forwards 0.4s;
+    }
+
+    h1 em { font-style: italic; color: var(--gold-light); }
+
+    .title-line {
+      display: flex;
+      align-items: center;
+      gap: 2rem;
+      margin-top: 2.5rem;
+      opacity: 0;
+      animation: fadeUp 1s ease forwards 0.6s;
+    }
+
+    .title-line::before {
+      content: '';
+      width: 50px; height: 1px;
+      background: var(--gold);
+      flex-shrink: 0;
+    }
+
+    .title-label {
+      font-size: 0.7rem;
+      letter-spacing: 0.3em;
+      text-transform: uppercase;
+      color: var(--gold);
+      font-weight: 400;
+    }
+
+    .scroll-hint {
+      position: absolute;
+      bottom: 3rem; left: 8vw;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      font-size: 0.6rem;
+      letter-spacing: 0.25em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      opacity: 0;
+      animation: fadeUp 1s ease forwards 1s;
+    }
+
+    .scroll-hint::after {
+      content: '';
+      width: 40px; height: 1px;
+      background: var(--text-muted);
+      animation: expandLine 2s ease-in-out infinite;
+    }
+
+    @keyframes expandLine {
+      0%, 100% { width: 40px; opacity: 0.5; }
+      50% { width: 70px; opacity: 1; }
+    }
+
+    main { position: relative; z-index: 1; }
+    section { padding: 7rem 8vw; border-bottom: 1px solid var(--border); }
+
+    .section-tag {
+      font-size: 0.6rem;
+      letter-spacing: 0.4em;
+      text-transform: uppercase;
+      color: var(--gold);
+      font-weight: 400;
+      margin-bottom: 3rem;
+      display: flex;
+      align-items: center;
+      gap: 1.5rem;
+    }
+
+    .section-tag::after {
+      content: '';
+      flex: 1; max-width: 60px; height: 1px;
+      background: var(--gold); opacity: 0.5;
+    }
+
+    .summary-text {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: clamp(1.4rem, 2.5vw, 2rem);
+      font-weight: 300;
+      line-height: 1.6;
+      color: var(--cream);
+      max-width: 800px;
+    }
+
+    .summary-text strong { color: var(--gold-light); font-weight: 400; }
+
+    .highlights {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1px;
+      background: var(--border);
+      margin-top: 5rem;
+      border: 1px solid var(--border);
+    }
+
+    .highlight-card {
+      background: var(--dark-card);
+      padding: 2.5rem;
+      transition: background 0.3s;
+      position: relative;
+    }
+
+    .highlight-card:hover { background: #1c1a16; }
+
+    .highlight-num {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 3rem;
+      font-weight: 300;
+      color: var(--gold);
+      line-height: 1;
+      margin-bottom: 0.5rem;
+    }
+
+    .highlight-label {
+      font-size: 0.65rem;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      margin-bottom: 1rem;
+    }
+
+    .highlight-desc { font-size: 0.8rem; color: #9e9080; line-height: 1.7; }
+
+    .chefs-section { background: var(--dark-mid); }
+
+    .chefs-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 2rem;
+      margin-top: 3rem;
+    }
+
+    .chef-card {
+      border: 1px solid var(--border);
+      padding: 2rem 1.8rem;
+      position: relative;
+      overflow: hidden;
+      transition: border-color 0.3s;
+    }
+
+    .chef-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0;
+      width: 2px; height: 0;
+      background: var(--gold);
+      transition: height 0.4s ease;
+    }
+
+    .chef-card:hover::before { height: 100%; }
+    .chef-card:hover { border-color: rgba(184,156,110,0.4); }
+
+    .chef-stars { font-size: 0.7rem; color: var(--gold); letter-spacing: 0.1em; margin-bottom: 0.8rem; }
+
+    .chef-name {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 1.3rem;
+      font-weight: 400;
+      color: var(--cream);
+      margin-bottom: 0.3rem;
+    }
+
+    .chef-note { font-size: 0.7rem; color: var(--text-muted); letter-spacing: 0.05em; }
+
+    .timeline { display: flex; flex-direction: column; }
+
+    .timeline-item {
+      display: grid;
+      grid-template-columns: 200px 1fr;
+      gap: 3rem;
+      padding: 3rem 0;
+      border-bottom: 1px solid var(--border);
+      position: relative;
+    }
+
+    .timeline-item:last-child { border-bottom: none; }
+
+    .timeline-date {
+      font-size: 0.65rem;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--gold);
+      padding-top: 0.3rem;
+      font-weight: 400;
+    }
+
+    .timeline-content h3 {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 1.4rem;
+      font-weight: 400;
+      color: var(--cream);
+      margin-bottom: 0.3rem;
+    }
+
+    .timeline-content .place {
+      font-size: 0.7rem;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: var(--gold);
+      margin-bottom: 1rem;
+    }
+
+    .timeline-content p { font-size: 0.82rem; color: #9e9080; line-height: 1.8; }
+
+    .expertise-section { background: var(--dark-mid); }
+    .tags { display: flex; flex-wrap: wrap; gap: 0.8rem; margin-top: 2rem; }
+
+    .tag {
+      padding: 0.5rem 1.2rem;
+      border: 1px solid var(--border);
+      font-size: 0.65rem;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      transition: all 0.3s;
+    }
+
+    .tag:hover { border-color: var(--gold); color: var(--gold); }
+    body.edit-mode .tag { cursor: text; }
+
+    footer {
+      padding: 4rem 8vw;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+
+    .footer-name {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 1.2rem;
+      font-weight: 300;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+    }
+
+    .footer-copy { font-size: 0.6rem; letter-spacing: 0.2em; color: var(--text-muted); }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(24px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .reveal {
+      opacity: 0;
+      transform: translateY(30px);
+      transition: opacity 0.8s ease, transform 0.8s ease;
+    }
+
+    .reveal.visible { opacity: 1; transform: translateY(0); }
+
+    #toast {
+      position: fixed;
+      bottom: 5.5rem; right: 2rem;
+      background: var(--gold);
+      color: var(--dark);
+      font-family: 'Montserrat', sans-serif;
+      font-size: 0.6rem;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      padding: 0.7rem 1.4rem;
+      z-index: 2000;
+      opacity: 0;
+      transform: translateY(8px);
+      transition: all 0.3s;
+      pointer-events: none;
+    }
+
+    #toast.show { opacity: 1; transform: translateY(0); }
+
+    @media (max-width: 640px) {
+      .timeline-item { grid-template-columns: 1fr; gap: 0.5rem; }
+      header { padding: 5rem 6vw 4rem; }
+      section { padding: 5rem 6vw; }
+      #edit-toolbar { flex-direction: column; gap: 0.5rem; padding: 0.75rem 1rem; }
+    }
+  </style>
+</head>
+<body id="artifacts-component-root-html" class="" style="">
+
+<!-- EDIT TOOLBAR -->
+
+
+<!-- HERO -->
+<header>
+  <div class="eyebrow">Est. 1994 &nbsp;·&nbsp; Italy</div>
+  <h1>Michele "Tico"<br><em>Gobbato</em></h1>
+  <div class="title-line">
+    <span class="title-label">Executive Chef &nbsp;·&nbsp; Sommelier &nbsp;·&nbsp; Mixologist</span>
+  </div>
+  <div class="scroll-hint">Scroll to explore</div>
+</header>
+
+<main>
+
+  <!-- PROFILE -->
+  <section>
+    <div class="section-tag">Profile</div>
+    <p class="summary-text reveal visible">
+      A career shaped in Italy's most celebrated kitchens, working at the right hand of
+      <strong>Michelin-starred legends</strong>. From the cellar to the pass, Michele brings
+      thirty years of mastery in culinary excellence, oenology, and the art of
+      exceptional hospitality — always in service of the unforgettable guest experience.
+    </p>
+
+    <div class="highlights reveal visible">
+      <div class="highlight-card">
+        
+        <div class="highlight-num">30+</div>
+        <div class="highlight-label">Years of Experience</div>
+        <div class="highlight-desc">From 1994 to the present — fine dining, resort leadership, and Michelin-starred environments.</div>
+      </div>
+      <div class="highlight-card">
+        
+        <div class="highlight-num">19</div>
+        <div class="highlight-label">Michelin Stars, Combined</div>
+        <div class="highlight-desc">Proud collaborator of chefs collectively holding 19 Michelin Stars, including the world's #1 restaurant — twice.</div>
+      </div>
+      <div class="highlight-card">
+        
+        <div class="highlight-num">7+</div>
+        <div class="highlight-label">Years of Managerial Experience</div>
+        <div class="highlight-desc">Led operations at Casalunga Resort and Golf Club, La Grotta and Franceschetta58 overseeing all service, cellar, and guest experience.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- COLLABORATIONS -->
+  <section class="chefs-section">
+    <div class="section-tag">Notable Collaborations</div>
+    <div class="chefs-grid" id="chefs-grid">
+
+      <div class="chef-card reveal visible">
+        
+        <div class="chef-stars">★★★★★★★</div>
+        <div class="chef-name">Bruno Barbieri</div>
+        <div class="chef-note">7 Michelin Stars · TV Personality · Locanda Solarola · Il Trigabolo · La Grotta</div>
+      </div>
+
+      <div class="chef-card reveal visible">
+        
+        <div class="chef-stars">★★★★★</div>
+        <div class="chef-name">Igles Corelli</div>
+        <div class="chef-note">5 Michelin Stars · Il Trigabolo · Locanda della Tamerice</div>
+      </div>
+
+      <div class="chef-card reveal visible">
+        
+        <div class="chef-stars">★★★ + 🌿</div>
+        <div class="chef-name">Massimo Bottura</div>
+        <div class="chef-note">3 Stars · 1 Green Star · Best Restaurant in the World ×2 · Franceschetta58 · Refettorio Ambrosiano</div>
+      </div>
+
+      <div class="chef-card reveal visible">
+        
+        <div class="chef-stars">★★</div>
+        <div class="chef-name">Nino Bergese</div>
+        <div class="chef-note">2 Michelin Stars · "The Chef of Kings" · Co-creator of Uovo in Raviolo · Ristorante San Domenico</div>
+      </div>
+
+      <div class="chef-card reveal visible">
+        
+        <div class="chef-stars">★★</div>
+        <div class="chef-name">Valentino Marcattilii</div>
+        <div class="chef-note">2 Michelin Stars · Co-creator of Uovo in Raviolo · Ristorante San Domenico</div>
+      </div>
+
+      <div class="chef-card reveal visible">
+        
+        <div class="chef-stars">🎂</div>
+        <div class="chef-name">Mauro Gualandi</div>
+        <div class="chef-note">Celebrity Pastry Chef · TV Personality</div>
+      </div>
+
+    </div>
+    
+  </section>
+
+  <!-- CAREER TIMELINE -->
+  <section>
+    <div class="section-tag">Career</div>
+    <div class="timeline" id="timeline">
+
+      <div class="timeline-item reveal visible">
+        
+        <div class="timeline-date">May 1994 — Present</div>
+        <div class="timeline-content">
+          <h3>Sommelier, Restaurant Manager &amp; Mixologist</h3>
+          <div class="place">Fine Dining &amp; Michelin-Starred Restaurants</div>
+          <p>Led front-of-house teams across Italy's finest establishments, elevating service standards and guest satisfaction through rigorous training and personal oversight. Managed wine cellar operations, cultivating deep partnerships with prestigious vintners and distributors to build exceptional wine programs. Developed an innovative mixology program at Franceschetta58, weaving local and global techniques into a distinctive cocktail identity. Hosted high-end Italian wine tastings that deepened guest loyalty, showcased rare oenological expertise, and entertained guests of all ages</p>
+        </div>
+      </div>
+
+      <div class="timeline-item reveal visible">
+        
+        <div class="timeline-date">Mar 2012 — Mar 2018</div>
+        <div class="timeline-content">
+          <h3>General Manager</h3>
+          <div class="place">Casalunga Resort and Golf Club · Castenaso, Italy</div>
+          <p>Oversaw all aspects of resort and restaurant operations, ensuring seamless delivery of luxury hospitality. Drove service quality initiatives and cultivated the property's reputation as a premier destination in the Emilia-Romagna region.</p>
+        </div>
+      </div>
+
+      <div class="timeline-item reveal visible">
+        
+        <div class="timeline-date">1994 — Launch</div>
+        <div class="timeline-content">
+          <h3>General Manager &amp; Right-Hand Man to Chef Bruno Barbieri</h3>
+          <div class="place">La Grotta 1994 · Opening</div>
+          <p>Served as the operational backbone during the opening of La Grotta 1994, guiding the restaurant through its critical first 18 months alongside seven-Michelin-starred Chef Bruno Barbieri. Also acted as Kitchen Manager at Locanda Solarola, bringing the same precision and leadership to every role.</p>
+        </div>
+      </div>
+
+      <div class="timeline-item reveal visible">
+        
+        <div class="timeline-date">Community</div>
+        <div class="timeline-content">
+          <h3>Contributor &amp; Collaborator</h3>
+          <div class="place">Refettorio Ambrosiano · Chef Massimo Bottura</div>
+          <p>Contributed to Chef Bottura's celebrated social initiative Refettorio Ambrosiano, applying fine-dining principles and unwavering attention to craft to meals prepared for those in need — a reminder that great hospitality is, at its core, an act of generosity. Also supervised Refettorio Ambrosiano's first expansion to another city, his adoptive Bologna.</p>
+        </div>
+      </div>
+
+    </div>
+    
+  </section>
+
+  <!-- EXPERTISE -->
+  <section class="expertise-section">
+    <div class="section-tag">Areas of Expertise</div>
+    <div class="tags reveal visible" id="tags-container">
+      <span class="tag" title="Double-click to remove">Sommellerie</span>
+      <span class="tag" title="Double-click to remove">knife skills</span>
+      <span class="tag" title="Double-click to remove">Mixology</span>
+      <span class="tag" title="Double-click to remove">cooking classes</span>
+      <span class="tag" title="Double-click to remove">Staff Training</span>
+      <span class="tag" title="Double-click to remove">General Management</span>
+      <span class="tag" title="Double-click to remove">Resort Operations</span>
+      <span class="tag" title="Double-click to remove">Guest Experience</span>
+      <span class="tag" title="Double-click to remove">Oenology</span>
+      <span class="tag" title="Double-click to remove">Wine Cellar Management</span>
+      <span class="tag" title="Double-click to remove">Vintner Relations</span>
+      <span class="tag" title="Double-click to remove">Fine Dining Standards</span>
+      <span class="tag" title="Double-click to remove">Cocktail Innovation</span>
+      <span class="tag" title="Double-click to remove">Social Impact Dining</span>
+      <span class="tag" title="Double-click to remove"><span style="color: rgb(184, 156, 110); font-size: 10.4px; letter-spacing: 2.08px;">Italian Wine Programs</span></span><span class="tag" title="Double-click to remove"><span style="color: rgb(184, 156, 110); font-size: 10.4px; letter-spacing: 2.08px;">Front of House Leadership</span></span>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="footer-name">Michele Gobbato</div>
+  <div class="footer-copy">Executive Chef&nbsp;<span style="font-size: 11.2px; letter-spacing: 0.56px;">·&nbsp;</span>Sommelier&nbsp;<span style="font-size: 11.2px; letter-spacing: 0.56px;">· Mixologist&nbsp;</span>· Italy</div>
+</footer>
+
+<!-- COPY MODAL -->
+
+
+
+
+
+
+<script>
+  // Reveal animations
+  const revealEls = document.querySelectorAll('.reveal');
+  const obs = new IntersectionObserver(entries => {
+    entries.forEach((e, i) => {
+      if (e.isIntersecting) {
+        setTimeout(() => e.target.classList.add('visible'), i * 80);
+        obs.unobserve(e.target);
+      }
+    });
+  }, { threshold: 0.1 });
+  revealEls.forEach(el => obs.observe(el));
+
+  // Edit mode
+  let editMode = false;
+  const originalHTML = document.documentElement.outerHTML;
+
+  function toggleEditMode() {
+    editMode = !editMode;
+    document.body.classList.toggle('edit-mode', editMode);
+    document.getElementById('edit-toolbar').classList.toggle('visible', editMode);
+    document.getElementById('edit-toggle').classList.toggle('active', editMode);
+    document.getElementById('toggle-label').textContent = editMode ? 'Done Editing' : 'Edit Page';
+    document.body.style.paddingTop = editMode ? '52px' : '';
+
+    document.querySelectorAll('[contenteditable]').forEach(el => {
+      el.contentEditable = editMode ? 'true' : 'false';
+    });
+
+    document.querySelectorAll('.tag').forEach(tag => {
+      tag.ondblclick = editMode ? () => tag.remove() : null;
+      tag.title = editMode ? 'Double-click to remove' : '';
+    });
+  }
+
+  function discardChanges() {
+    if (!confirm('Discard all edits and revert to the original?')) return;
+    document.open();
+    document.write(originalHTML);
+    document.close();
+  }
+
+  function saveHTML() {
+    const clone = document.documentElement.cloneNode(true);
+    ['#edit-toolbar','#edit-toggle','#toast','#copy-modal'].forEach(sel => {
+      const el = clone.querySelector(sel);
+      if (el) el.remove();
+    });
+    clone.querySelectorAll('.delete-btn,.add-item-btn,.add-tag-btn').forEach(el => el.remove());
+    clone.querySelectorAll('[contenteditable]').forEach(el => el.removeAttribute('contenteditable'));
+    clone.querySelector('body').classList.remove('edit-mode');
+    clone.querySelector('body').style.paddingTop = '';
+
+    const html = '<!DOCTYPE html>\n' + clone.outerHTML;
+    document.getElementById('copy-textarea').value = html;
+    document.getElementById('copy-modal').style.display = 'flex';
+  }
+
+  function copyAndClose() {
+    const ta = document.getElementById('copy-textarea');
+    ta.select();
+    document.execCommand('copy');
+    const btn = document.getElementById('copy-btn');
+    btn.textContent = '✓ Copied!';
+    setTimeout(() => { btn.textContent = 'Copy to Clipboard'; }, 2500);
+  }
+
+  function closeModal() {
+    document.getElementById('copy-modal').style.display = 'none';
+  }
+
+  function addChef() {
+    const grid = document.getElementById('chefs-grid');
+    const card = document.createElement('div');
+    card.className = 'chef-card reveal visible';
+    card.innerHTML = `
+      <button class="delete-btn" onclick="this.closest('.chef-card').remove()">✕ Remove</button>
+      <div class="chef-stars" contenteditable="true">★</div>
+      <div class="chef-name" contenteditable="true">Chef Name</div>
+      <div class="chef-note" contenteditable="true">Stars · Restaurant</div>
+    `;
+    grid.appendChild(card);
+    setTimeout(() => card.querySelector('.chef-name').focus(), 50);
+  }
+
+  function addTimelineItem() {
+    const timeline = document.getElementById('timeline');
+    const item = document.createElement('div');
+    item.className = 'timeline-item reveal visible';
+    item.innerHTML = `
+      <button class="delete-btn" onclick="this.closest('.timeline-item').remove()">✕ Remove</button>
+      <div class="timeline-date" contenteditable="true">Year — Year</div>
+      <div class="timeline-content">
+        <h3 contenteditable="true">Role Title</h3>
+        <div class="place" contenteditable="true">Restaurant · Location</div>
+        <p contenteditable="true">Describe your role and achievements here.</p>
+      </div>
+    `;
+    timeline.appendChild(item);
+    setTimeout(() => item.querySelector('h3').focus(), 50);
+  }
+
+  function addTag() {
+    const container = document.getElementById('tags-container');
+    const addBtn = container.querySelector('.add-tag-btn');
+    const tag = document.createElement('span');
+    tag.className = 'tag';
+    tag.contentEditable = 'true';
+    tag.textContent = 'New Skill';
+    tag.title = 'Double-click to remove';
+    tag.ondblclick = () => tag.remove();
+    container.insertBefore(tag, addBtn);
+    setTimeout(() => {
+      tag.focus();
+      const range = document.createRange();
+      range.selectNodeContents(tag);
+      window.getSelection().removeAllRanges();
+      window.getSelection().addRange(range);
+    }, 50);
+  }
+</script>
+
+
+</body></html>
