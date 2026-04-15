@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Domenica a Villa Shirin</title>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;500&family=Playfair+Display:ital,wght@0,400;1,400&family=Lora:ital,wght@0,400;1,400&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f7f3ec;
+    --bg-secondary: #efe9df;
+    --text-primary: #2c3a2a;
+    --accent: #4a6741;
+    --accent-secondary: #7a9e75;
+    --muted: #7a8c78;
+    --featured: #1e2e1c;
+    --la-mora: #3d5c3a;
+    --gold: #8a7a4a;
+    --border: rgba(74, 103, 65, 0.2);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background-color: var(--bg);
+    color: var(--text-primary);
+    font-family: 'Lora', serif;
+    min-height: 100vh;
+    position: relative;
+    overflow-x: hidden;
+  }
+
+  /* Grain overlay */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 100;
+    opacity: 0.03;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 512 512' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='grain'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23grain)'/%3E%3C/svg%3E");
+    background-repeat: repeat;
+    background-size: 200px 200px;
+  }
+
+  .page {
+    max-width: 780px;
+    margin: 0 auto;
+    padding: 64px 48px 80px;
+    position: relative;
+  }
+
+  /* Decorative corner borders */
+  .page::before,
+  .page::after {
+    content: '';
+    position: absolute;
+    width: 60px;
+    height: 60px;
+    border-color: var(--gold);
+    border-style: solid;
+    opacity: 0.4;
+  }
+  .page::before {
+    top: 32px; left: 32px;
+    border-width: 1px 0 0 1px;
+  }
+  .page::after {
+    bottom: 48px; right: 32px;
+    border-width: 0 1px 1px 0;
+  }
+
+  /* Header */
+  .header {
+    text-align: center;
+    margin-bottom: 48px;
+    animation: fadeUp 0.9s ease both;
+  }
+
+  .restaurant-name {
+    font-family: 'Cinzel', serif;
+    font-weight: 400;
+    font-size: 11px;
+    letter-spacing: 0.35em;
+    color: var(--muted);
+    text-transform: uppercase;
+    margin-bottom: 20px;
+  }
+
+  .menu-title {
+    font-family: 'Cinzel', serif;
+    font-weight: 500;
+    font-size: 32px;
+    letter-spacing: 0.08em;
+    color: var(--featured);
+    line-height: 1.2;
+    margin-bottom: 6px;
+  }
+
+  .menu-subtitle {
+    font-family: 'Cinzel', serif;
+    font-weight: 400;
+    font-size: 12px;
+    letter-spacing: 0.25em;
+    color: var(--gold);
+    text-transform: uppercase;
+    margin-bottom: 36px;
+  }
+
+  /* Gold rule */
+  .rule {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 36px;
+  }
+  .rule::before,
+  .rule::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: linear-gradient(to right, transparent, var(--gold), transparent);
+    opacity: 0.5;
+  }
+  .rule-diamond {
+    width: 5px;
+    height: 5px;
+    background: var(--gold);
+    transform: rotate(45deg);
+    opacity: 0.6;
+  }
+
+  /* Blurb */
+  .blurb {
+    font-family: 'Lora', serif;
+    font-style: italic;
+    font-size: 14px;
+    line-height: 1.9;
+    color: var(--muted);
+    text-align: center;
+    max-width: 560px;
+    margin: 0 auto 16px;
+    animation: fadeUp 0.9s 0.15s ease both;
+  }
+
+  .blurb-closing {
+    font-family: 'Cinzel', serif;
+    font-weight: 400;
+    font-size: 11px;
+    letter-spacing: 0.2em;
+    color: var(--accent);
+    text-align: center;
+    margin-bottom: 52px;
+    animation: fadeUp 0.9s 0.2s ease both;
+  }
+
+  /* Section */
+  .section {
+    margin-bottom: 40px;
+    animation: fadeUp 0.7s ease both;
+  }
+
+  .section:nth-child(2) { animation-delay: 0.1s; }
+  .section:nth-child(3) { animation-delay: 0.15s; }
+  .section:nth-child(4) { animation-delay: 0.2s; }
+  .section:nth-child(5) { animation-delay: 0.25s; }
+  .section:nth-child(6) { animation-delay: 0.3s; }
+  .section:nth-child(7) { animation-delay: 0.35s; }
+  .section:nth-child(8) { animation-delay: 0.4s; }
+  .section:nth-child(9) { animation-delay: 0.45s; }
+
+  .section-header {
+    margin-bottom: 10px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .section-title {
+    font-family: 'Cinzel', serif;
+    font-weight: 500;
+    font-size: 13px;
+    letter-spacing: 0.2em;
+    color: var(--la-mora);
+    text-transform: uppercase;
+    margin-bottom: 3px;
+  }
+
+  .section-desc {
+    font-family: 'Lora', serif;
+    font-style: italic;
+    font-size: 12px;
+    color: var(--muted);
+    letter-spacing: 0.02em;
+  }
+
+  .section-body {
+    padding-top: 12px;
+  }
+
+  /* Items */
+  .item-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 8px;
+  }
+
+  .item-name {
+    font-family: 'Playfair Display', serif;
+    font-weight: 400;
+    font-size: 15px;
+    color: var(--text-primary);
+    letter-spacing: 0.01em;
+  }
+
+  .item-dots {
+    flex: 1;
+    border-bottom: 1px dotted var(--border);
+    margin-bottom: 3px;
+    min-width: 20px;
+  }
+
+  /* Inline items (dot separated) */
+  .inline-items {
+    font-family: 'Playfair Display', serif;
+    font-size: 15px;
+    color: var(--text-primary);
+    line-height: 1.8;
+  }
+
+  .inline-items .separator {
+    color: var(--gold);
+    margin: 0 8px;
+    font-size: 12px;
+  }
+
+  .item-weekly {
+    font-family: 'Lora', serif;
+    font-style: italic;
+    font-size: 13px;
+    color: var(--muted);
+    margin-top: 6px;
+  }
+
+  /* Sauces */
+  .sauce-list {
+    font-family: 'Playfair Display', serif;
+    font-size: 14px;
+    color: var(--text-primary);
+    line-height: 1.8;
+    margin-bottom: 4px;
+  }
+
+  .sauce-atasheen {
+    color: var(--accent);
+    font-style: italic;
+  }
+
+  .brodo-note {
+    font-family: 'Lora', serif;
+    font-style: italic;
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 6px;
+    letter-spacing: 0.02em;
+  }
+
+  /* Bar sections */
+  .bar-section {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    padding: 24px 28px;
+    margin-bottom: 20px;
+    position: relative;
+  }
+
+  .bar-section::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 12px; bottom: 12px;
+    width: 2px;
+    background: var(--accent);
+    opacity: 0.3;
+  }
+
+  .bar-title {
+    font-family: 'Cinzel', serif;
+    font-weight: 500;
+    font-size: 13px;
+    letter-spacing: 0.2em;
+    color: var(--la-mora);
+    text-transform: uppercase;
+    margin-bottom: 3px;
+  }
+
+  .bar-desc {
+    font-family: 'Lora', serif;
+    font-style: italic;
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 12px;
+  }
+
+  .bar-spirits {
+    font-family: 'Playfair Display', serif;
+    font-size: 15px;
+    color: var(--text-primary);
+    letter-spacing: 0.03em;
+    margin-bottom: 6px;
+  }
+
+  .bar-note {
+    font-family: 'Lora', serif;
+    font-style: italic;
+    font-size: 12px;
+    color: var(--accent-secondary);
+  }
+
+  .bar-mimosa-items {
+    font-family: 'Playfair Display', serif;
+    font-size: 14px;
+    color: var(--muted);
+    line-height: 1.8;
+  }
+
+  /* Divider between bar sections */
+  .bar-divider {
+    height: 1px;
+    background: var(--border);
+    margin: 8px 0 20px;
+  }
+
+  /* Footer pricing */
+  .footer-rule {
+    margin: 48px 0 24px;
+  }
+
+  .pricing {
+    text-align: center;
+  }
+
+  .pricing-text {
+    font-family: 'Cinzel', serif;
+    font-weight: 400;
+    font-size: 11px;
+    letter-spacing: 0.25em;
+    color: var(--muted);
+    text-transform: uppercase;
+  }
+
+  .pricing-text span {
+    color: var(--gold);
+  }
+
+  /* Animations */
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(16px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  /* Section spacing with thin line */
+  .section + .section {
+    padding-top: 4px;
+  }
+
+  /* Bar container */
+  .bar-container {
+    margin-top: 48px;
+    animation: fadeUp 0.7s 0.5s ease both;
+  }
+
+  .bar-container-title {
+    font-family: 'Cinzel', serif;
+    font-weight: 400;
+    font-size: 10px;
+    letter-spacing: 0.35em;
+    color: var(--muted);
+    text-transform: uppercase;
+    text-align: center;
+    margin-bottom: 20px;
+  }
+
+  @media print {
+    body::before { display: none; }
+    .page { padding: 40px 36px; }
+    .section { animation: none; }
+    .header { animation: none; }
+    .blurb { animation: none; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="header">
+    <div class="restaurant-name">Villa Shirin · Austin, Texas</div>
+    <div class="menu-title">Domenica a Villa Shirin</div>
+    <div class="menu-subtitle">La Grande Tavola della Domenica</div>
+  </div>
+
+  <div class="rule"><div class="rule-diamond"></div></div>
+
+  <p class="blurb">
+    In the Italian tradition, Sunday lunch is not a meal. It is a declaration. Of time well spent, of food made with patience, of a table that holds everyone a little longer than they planned — family, friends, the neighbor who wasn't invited but came anyway.
+  </p>
+  <p class="blurb-closing">Benvenuti a Domenica a Villa Shirin.</p>
+
+  <div class="rule"><div class="rule-diamond"></div></div>
+
+  <!-- La Tavola -->
+  <div class="section">
+    <div class="section-header">
+      <div class="section-title">La Tavola</div>
+      <div class="section-desc">always on the table, always yours</div>
+    </div>
+    <div class="section-body">
+      <div class="inline-items">
+        Grissini<span class="separator">·</span>Taralli
+      </div>
+    </div>
+  </div>
+
+  <!-- Dal Forno -->
+  <div class="section">
+    <div class="section-header">
+      <div class="section-title">Dal Forno</div>
+      <div class="section-desc">still warm from the oven, all day long</div>
+    </div>
+    <div class="section-body">
+      <div class="inline-items">
+        Tigelle<span class="separator">·</span>Gnocco Fritto<span class="separator">·</span>Il Pane Villa Shirin
+      </div>
+      <div class="item-weekly">Varietà della Settimana</div>
+    </div>
+  </div>
+
+  <!-- Dal Nostro Orto -->
+  <div class="section">
+    <div class="section-header">
+      <div class="section-title">Dal Nostro Orto</div>
+      <div class="section-desc">from the garden, bright and simple</div>
+    </div>
+    <div class="section-body">
+      <div class="inline-items">
+        Pinzimonio<span class="separator">·</span>Giardiniera<span class="separator">·</span>Insalata
+      </div>
+    </div>
+  </div>
+
+  <!-- Salumi e Formaggi -->
+  <div class="section">
+    <div class="section-header">
+      <div class="section-title">Salumi e Formaggi</div>
+      <div class="section-desc">our house productions, sliced at the cart</div>
+    </div>
+    <div class="section-body">
+      <div class="inline-items">
+        Una selezione delle nostre produzioni
+      </div>
+    </div>
+  </div>
+
+  <!-- La Pasta -->
+  <div class="section">
+    <div class="section-header">
+      <div class="section-title">La Pasta</div>
+      <div class="section-desc">slow-cooked Sunday sauces, made this morning</div>
+    </div>
+    <div class="section-body">
+      <div class="inline-items">
+        Lasagne al Forno<span class="separator">·</span>Carbonara<span class="separator">·</span>Tortellini al Ragù
+      </div>
+      <div class="item-weekly">Pasta della Settimana</div>
+    </div>
+  </div>
+
+  <!-- Il Bollito -->
+  <div class="section">
+    <div class="section-header">
+      <div class="section-title">Il Bollito</div>
+      <div class="section-desc">the grand tradition of Northern Italy — low, slow, and served tableside</div>
+    </div>
+    <div class="section-body">
+      <div class="inline-items" style="margin-bottom:10px;">Bollito misto della domenica</div>
+      <div class="sauce-list">
+        Salsa verde<span style="color:var(--gold);margin:0 8px;font-size:12px;">·</span>Mostarda di frutta<span style="color:var(--gold);margin:0 8px;font-size:12px;">·</span>Sughetto<span style="color:var(--gold);margin:0 8px;font-size:12px;">·</span>Cren<span style="color:var(--gold);margin:0 8px;font-size:12px;">·</span><span class="sauce-atasheen">Salsa Atasheen</span>
+      </div>
+      <div class="brodo-note">Il brodo, versato al tavolo</div>
+    </div>
+  </div>
+
+  <!-- Dalla Griglia -->
+  <div class="section">
+    <div class="section-header">
+      <div class="section-title">Dalla Griglia</div>
+      <div class="section-desc">from the fire — land, sea, or both</div>
+    </div>
+    <div class="section-body">
+      <div class="item-weekly">La selezione cambia ogni settimana</div>
+    </div>
+  </div>
+
+  <!-- I Dolci -->
+  <div class="section">
+    <div class="section-header">
+      <div class="section-title">I Dolci</div>
+      <div class="section-desc">the way Sunday should always end</div>
+    </div>
+    <div class="section-body">
+      <div class="inline-items">
+        Sbrisolona<span class="separator">·</span>Crema Fritta<span class="separator">·</span>Dolce Cremoso<span class="separator">·</span>Crostata
+      </div>
+    </div>
+  </div>
+
+  <!-- Bar -->
+  <div class="bar-container">
+    <div class="bar-container-title">I Bar della Domenica</div>
+
+    <div class="bar-section">
+      <div class="bar-title">Bruschetta Bar</div>
+      <div class="bar-desc">our take on the brunch cocktail — smoky, bold, unmistakably Villa Shirin</div>
+      <div class="bar-spirits">Grappa · Vodka · Tequila · Birra Italiana</div>
+      <div class="bar-note">Costruito a modo tuo</div>
+    </div>
+
+    <div class="bar-section">
+      <div class="bar-title">Il Bar delle Mimose</div>
+      <div class="bar-desc">our bubbles, your Sunday morning</div>
+      <div class="bar-mimosa-items">
+        Spumanti Villa Shirin<span style="color:var(--gold);margin:0 8px;font-size:11px;">·</span>Succhi<span style="color:var(--gold);margin:0 8px;font-size:11px;">·</span>Spremute<span style="color:var(--gold);margin:0 8px;font-size:11px;">·</span>Centrifughe<span style="color:var(--gold);margin:0 8px;font-size:11px;">·</span>Frutta
+      </div>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <div class="footer-rule">
+    <div class="rule"><div class="rule-diamond"></div></div>
+  </div>
+
+  <div class="pricing">
+    <div class="pricing-text">
+      Tutto incluso &nbsp;<span>·</span>&nbsp; [prezzo] a persona &nbsp;<span>·</span>&nbsp; Bevande escluse
+    </div>
+  </div>
+
+</div>
+</body>
+</html>
